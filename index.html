@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Super Adventure Bros</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: linear-gradient(#5c94fc, #a4d4fc);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'Courier New', monospace;
+    overflow: hidden;
+  }
+  #gameContainer {
+    position: relative;
+  }
+  #hud {
+    display: flex;
+    justify-content: space-between;
+    width: 800px;
+    color: white;
+    font-size: 20px;
+    font-weight: bold;
+    text-shadow: 2px 2px 0 #000;
+    margin-bottom: 8px;
+    padding: 0 10px;
+  }
+  canvas {
+    background: linear-gradient(#5c94fc, #a4d4fc);
+    border: 4px solid #000;
+    display: block;
+    image-rendering: pixelated;
+  }
+  #overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.75);
+    color: white;
+    text-align: center;
+    font-size: 28px;
+    text-shadow: 2px 2px 0 #000;
+  }
+  #overlay button {
+    margin-top: 20px;
+    padding: 12px 28px;
+    font-size: 18px;
+    font-family: inherit;
+    background: #e52521;
+    color: white;
+    border: 3px solid #000;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  #overlay button:hover { background: #ff6b68; }
+  #hidden { display: none; }
+  #instructions {
+    color: white;
+    margin-top: 10px;
+    font-size: 14px;
+    text-shadow: 1px 1px 0 #000;
+  }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div>🍄 SCORE: <span id="scoreDisplay">0</span></div>
+  <div>⭐ COINS: <span id="coinDisplay">0</span></div>
+  <div>❤️ LIVES: <span id="livesDisplay">3</span></div>
+</div>
+
+<div id="gameContainer">
+  <canvas id="gameCanvas" width="800" height="450"></canvas>
+  <div id="overlay">
+    <div id="overlayText">SUPER ADVENTURE BROS</div>
+    <button id="startBtn">START GAME</button>
+  </div>
+</div>
+<div id="instructions">Arrow Keys / A D to move &nbsp;|&nbsp; Space / Up to jump &nbsp;|&nbsp; Stomp enemies, grab coins, reach the flag!</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+const scoreDisplay = document.getElementById('scoreDisplay');
+const coinDisplay = document.getElementById('coinDisplay');
+const livesDisplay = document.getElementById('livesDisplay');
+const overlay = document.getElementById('overlay');
+const overlayText = document.getElementById('overlayText');
+const startBtn = document.getElementById('startBtn');
+
+const GRAVITY = 0.6;
+const FRICTION = 0.8;
+const GROUND_Y = H - 60;
+
+let keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (['Space','ArrowUp','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+});
+document.addEventListener('keyup', e => keys[e.code] = false);
+
+let camX = 0;
+let score = 0, coins = 0, lives = 3;
+let gameState = 'menu'; // menu, playing, won, lost
+let levelWidth = 3200;
+
+// ---------- Level design ----------
+function buildLevel() {
+  return {
+    platforms: [
+      {x:0, y:GROUND_Y, w:520, h:60, type:'ground'},
+      {x:620, y:GROUND_Y, w:300, h:60, type:'ground'},
+      {x:1020, y:GROUND_Y, w:400, h:60, type:'ground'},
+      {x:1520, y:GROUND_Y, w:260, h:60, type:'ground'},
+      {x:1880, y:GROUND_Y, w:600, h:60, type:'ground'},
+      {x:2580, y:GROUND_Y, w:620, h:60, type:'ground'},
+      // floating blocks
+      {x:300, y:320, w:96, h:32, type:'block'},
+      {x:700, y:280, w:96, h:32, type:'block'},
+      {x:900, y:220, w:96, h:32, type:'block'},
+      {x:1150, y:300, w:96, h:32, type:'block'},
+      {x:1600, y:260, w:96, h:32, type:'block'},
+      {x:1950, y:320, w:96, h:32, type:'block'},
+      {x:2150, y:240, w:96, h:32, type:'block'},
+      {x:2400, y:300, w:96, h:32, type:'block'},
+    ],
+    coins: [
+      {x:330,y:270,taken:false},{x:730,y:230,taken:false},{x:930,y:170,taken:false},
+      {x:1180,y:250,taken:false},{x:1630,y:210,taken:false},{x:1980,y:270,taken:false},
+      {x:2180,y:190,taken:false},{x:2430,y:250,taken:false},
+      {x:150,y:GROUND_Y-40,taken:false},{x:200,y:GROUND_Y-40,taken:false},{x:250,y:GROUND_Y-40,taken:false},
+      {x:1100,y:GROUND_Y-40,taken:false},{x:1150,y:GROUND_Y-40,taken:false},
+      {x:2650,y:GROUND_Y-40,taken:false},{x:2700,y:GROUND_Y-40,taken:false},{x:2750,y:GROUND_Y-40,taken:false},
+    ],
+    enemies: [
+      {x:700, y:GROUND_Y-32, w:32, h:32, vx:-2, alive:true, range:[620,900]},
+      {x:1100, y:GROUND_Y-32, w:32, h:32, vx:2, alive:true, range:[1020,1380]},
+      {x:1600, y:GROUND_Y-32, w:32, h:32, vx:-2, alive:true, range:[1520,1750]},
+      {x:2000, y:GROUND_Y-32, w:32, h:32, vx:2, alive:true, range:[1880,2400]},
+      {x:2700, y:GROUND_Y-32, w:32, h:32, vx:-2, alive:true, range:[2580,3100]},
+    ],
+    pits: [
+      {x:520, w:100},
+      {x:920, w:100},
+      {x:1280, w:240},
+      {x:1780, w:100},
+    ],
+    flagX: 3100
+  };
+}
+
+let level = buildLevel();
+
+const player = {
+  x: 50, y: 0, w: 32, h: 40,
+  vx: 0, vy: 0,
+  onGround: false,
+  facing: 1,
+  invincible: 0,
+  alive: true
+};
+
+function resetPlayer() {
+  player.x = 50; player.y = GROUND_Y - player.h;
+  player.vx = 0; player.vy = 0;
+  player.onGround = false;
+  player.invincible = 90;
+}
+
+function resetGame() {
+  level = buildLevel();
+  score = 0; coins = 0; lives = 3;
+  camX = 0;
+  resetPlayer();
+  updateHUD();
+}
+
+function updateHUD() {
+  scoreDisplay.textContent = score;
+  coinDisplay.textContent = coins;
+  livesDisplay.textContent = lives;
+}
+
+function rectsOverlap(a,b) {
+  return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+}
+
+function isOverPit(x, w) {
+  for (const pit of level.pits) {
+    if (x + w > pit.x && x < pit.x + pit.w) return true;
+  }
+  return false;
+}
+
+function loseLife() {
+  lives--;
+  updateHUD();
+  if (lives <= 0) {
+    gameState = 'lost';
+    showOverlay('GAME OVER', 'Try Again');
+  } else {
+    resetPlayer();
+    camX = Math.max(0, player.x - 200);
+  }
+}
+
+function showOverlay(text, btnText) {
+  overlayText.textContent = text;
+  startBtn.textContent = btnText;
+  overlay.style.display = 'flex';
+}
+
+startBtn.addEventListener('click', () => {
+  overlay.style.display = 'none';
+  resetGame();
+  gameState = 'playing';
+});
+
+// ---------- Update ----------
+function update() {
+  if (gameState !== 'playing') return;
+
+  // horizontal movement
+  if (keys['ArrowLeft'] || keys['KeyA']) {
+    player.vx -= 0.7;
+    player.facing = -1;
+  }
+  if (keys['ArrowRight'] || keys['KeyD']) {
+    player.vx += 0.7;
+    player.facing = 1;
+  }
+  player.vx *= FRICTION;
+  if (Math.abs(player.vx) > 6) player.vx = 6 * Math.sign(player.vx);
+
+  // jump
+  if ((keys['Space'] || keys['ArrowUp'] || keys['KeyW']) && player.onGround) {
+    player.vy = -13;
+    player.onGround = false;
+  }
+
+  player.vy += GRAVITY;
+  if (player.vy > 15) player.vy = 15;
+
+  // move x
+  player.x += player.vx;
+  if (player.x < 0) player.x = 0;
+
+  // platform collision X (simple)
+  for (const p of level.platforms) {
+    if (rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h}, p)) {
+      if (player.vx > 0) player.x = p.x - player.w;
+      else if (player.vx < 0) player.x = p.x + p.w;
+    }
+  }
+
+  // move y
+  player.y += player.vy;
+  player.onGround = false;
+
+  for (const p of level.platforms) {
+    if (rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h}, p)) {
+      if (player.vy > 0) {
+        player.y = p.y - player.h;
+        player.vy = 0;
+        player.onGround = true;
+      } else if (player.vy < 0) {
+        player.y = p.y + p.h;
+        player.vy = 0;
+      }
+    }
+  }
+
+  // fall into pit / off world
+  if (player.y > H + 100) {
+    loseLife();
+    return;
+  }
+
+  // coins
+  for (const c of level.coins) {
+    if (!c.taken) {
+      const d = Math.hypot((player.x+player.w/2) - c.x, (player.y+player.h/2) - c.y);
+      if (d < 28) {
+        c.taken = true;
+        coins++;
+        score += 100;
+        updateHUD();
+      }
+    }
+  }
+
+  // enemies
+  for (const e of level.enemies) {
+    if (!e.alive) continue;
+    e.x += e.vx;
+    if (e.x < e.range[0] || e.x + e.w > e.range[1]) e.vx *= -1;
+
+    if (rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h}, e)) {
+      if (player.vy > 2 && (player.y + player.h) - e.y < 20) {
+        // stomp
+        e.alive = false;
+        player.vy = -9;
+        score += 200;
+        updateHUD();
+      } else if (player.invincible <= 0) {
+        loseLife();
+        return;
+      }
+    }
+  }
+
+  if (player.invincible > 0) player.invincible--;
+
+  // camera
+  camX = player.x - 200;
+  if (camX < 0) camX = 0;
+  if (camX > levelWidth - W) camX = levelWidth - W;
+
+  // win condition
+  if (player.x > level.flagX) {
+    gameState = 'won';
+    score += 500;
+    updateHUD();
+    showOverlay('🏆 YOU WIN! Score: ' + score, 'Play Again');
+  }
+}
+
+// ---------- Draw ----------
+function drawBackgroundDecor() {
+  // clouds
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  for (let i = 0; i < 8; i++) {
+    const cx = (i * 500 - camX * 0.3) % (levelWidth + 500);
+    drawCloud(cx, 60 + (i % 3) * 30);
+  }
+  // hills
+  ctx.fillStyle = '#3fa34d';
+  for (let i = 0; i < 10; i++) {
+    const hx = (i * 400 - camX * 0.6) % (levelWidth + 400);
+    ctx.beginPath();
+    ctx.arc(hx, GROUND_Y + 20, 60, Math.PI, 0);
+    ctx.fill();
+  }
+}
+
+function drawCloud(x, y) {
+  ctx.beginPath();
+  ctx.arc(x, y, 16, 0, Math.PI*2);
+  ctx.arc(x+18, y-8, 18, 0, Math.PI*2);
+  ctx.arc(x+36, y, 16, 0, Math.PI*2);
+  ctx.fill();
+}
+
+function draw() {
+  ctx.clearRect(0,0,W,H);
+  drawBackgroundDecor();
+
+  ctx.save();
+  ctx.translate(-camX, 0);
+
+  // platforms
+  for (const p of level.platforms) {
+    if (p.type === 'ground') {
+      ctx.fillStyle = '#8b5a2b';
+      ctx.fillRect(p.x, p.y, p.w, p.h);
+      ctx.fillStyle = '#4caf50';
+      ctx.fillRect(p.x, p.y, p.w, 10);
+    } else {
+      ctx.fillStyle = '#c77b3a';
+      ctx.fillRect(p.x, p.y, p.w, p.h);
+      ctx.strokeStyle = '#7a4a1f';
+      ctx.lineWidth = 2;
+      for (let bx = p.x; bx < p.x + p.w; bx += 32) {
+        ctx.strokeRect(bx, p.y, 32, p.h);
+      }
+    }
+  }
+
+  // pits (draw as gap - nothing, but add spikes look)
+  ctx.fillStyle = '#111';
+  for (const pit of level.pits) {
+    ctx.fillRect(pit.x, GROUND_Y + 20, pit.w, H - GROUND_Y);
+  }
+
+  // coins
+  for (const c of level.coins) {
+    if (!c.taken) {
+      ctx.fillStyle = '#ffd700';
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, 10, 0, Math.PI*2);
+      ctx.fill();
+      ctx.strokeStyle = '#c9a600';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }
+
+  // enemies
+  for (const e of level.enemies) {
+    if (e.alive) {
+      ctx.fillStyle = '#8b4513';
+      ctx.fillRect(e.x, e.y, e.w, e.h);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(e.x+6, e.y+8, 6, 6);
+      ctx.fillRect(e.x+20, e.y+8, 6, 6);
+      // little feet
+      ctx.fillStyle = '#5a2d0c';
+      ctx.fillRect(e.x, e.y+e.h-6, 10, 6);
+      ctx.fillRect(e.x+e.w-10, e.y+e.h-6, 10, 6);
+    }
+  }
+
+  // flag
+  ctx.fillStyle = '#888';
+  ctx.fillRect(level.flagX, GROUND_Y - 200, 6, 200);
+  ctx.fillStyle = '#e52521';
+  ctx.beginPath();
+  ctx.moveTo(level.flagX+6, GROUND_Y-200);
+  ctx.lineTo(level.flagX+50, GROUND_Y-185);
+  ctx.lineTo(level.flagX+6, GROUND_Y-170);
+  ctx.fill();
+
+  // player
+  if (player.invincible <= 0 || Math.floor(player.invincible/5)%2===0) {
+    ctx.fillStyle = '#e52521';
+    ctx.fillRect(player.x, player.y, player.w, player.h);
+    ctx.fillStyle = '#fcd7b6';
+    ctx.fillRect(player.x+4, player.y+4, player.w-8, 12);
+    ctx.fillStyle = '#3355dd';
+    ctx.fillRect(player.x, player.y+24, player.w, 16);
+    // eyes for facing direction
+    ctx.fillStyle = '#000';
+    const eyeX = player.facing === 1 ? player.x + player.w - 10 : player.x + 4;
+    ctx.fillRect(eyeX, player.y+8, 4, 4);
+  }
+
+  ctx.restore();
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+resetPlayer();
+draw();
+loop();
+</script>
+</body>
+</html>
